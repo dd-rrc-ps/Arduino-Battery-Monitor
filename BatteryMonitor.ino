@@ -1,7 +1,4 @@
 //  Developed from my original OLED_BMS_u8g2 sketch
-//  Added two additional pages Amperage and Voltage Analog needles
-//  Intended for the cabin of the boat for more simplistic classic indications
-//  Original pages are the exact same
 //
 //
 //  WRITTEN BY:
@@ -28,8 +25,10 @@
 //  24/09/19  Replaced avgI with rawI for displaying lightning symbol whilst charging.
 //  27/09/19  Changed screen off for 3 contrast levels on long button push.
 //  28/09/19  Added button press to swap between average or instant Watt reading.
+//  01/10/19  Changed abbreviatons on BMS status messages to easier understand their meaning; Added 5 sec push on button to clear BMS faults through sending CANBUS data.
+//  27/10/19  Changed constraints on "bars" to use bar variable instead of using indicated values. Added BMS CANBUS input MPO and changed MPE name in sketch. MPO as Active low to be connected to MPI and a 10kOhm pull-up resistor to BAT+.
 //
-//  Sketch 22352 bytes
+//  Sketch 22736 bytes
 //
 //  HARDWARE:
 //  Arduino Uno clone
@@ -52,10 +51,14 @@ MCP_CAN CAN0(10);                               // Set CS to pin 10
 //  Debugging
 int debug = 0;
 
-//  MCP_CAN DATA
+//  MCP_CAN RECEIVE DATA
 long unsigned int rxId;     // Stores 4 bytes 32 bits
 unsigned char len = 0;      // Stores at least 1 byte
 unsigned char rxBuf[8];     // Stores 8 bytes, 1 character  = 1 byte
+
+//  MCP_CAN SEND DATA
+byte mpo[8] = {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}; // Multi-purpose output activation signal
+//byte mpe[8] = {0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}; // Multi-purpose enable activation signal
 
 //  CANBUS data Identifier List
 //  ID 0x03B BYT0+1:INST_VOLT BYT2+3:INST_AMP BYT4+5:ABS_AMP BYT6:SOC **** ABS_AMP from OrionJr errendous ****
@@ -267,7 +270,7 @@ void gauge(uint8_t angle) {
   }
 }
  
-// ------------------------ bars gauge * 7 bytes from rxBuf ------------------------
+// ------------------------ bars gauge * 9 bytes from rxBuf ------------------------
 
 void bars() {
   
@@ -304,7 +307,7 @@ void bars() {
   u8g2.drawStr(28, 56, "High");
   u8g2.drawStr(29, 63, "Cell");
   u8g2.drawFrame(31, 8, 11, 38);
-  if (hC <= 4000 && hC >= 2700) {
+  if (hCb <= 35 && hCb > 0) {
     u8g2.drawBox(33, 44-hCb, 7, hCb);
   }
   u8g2.setCursor(54, 5);
@@ -312,7 +315,7 @@ void bars() {
   u8g2.drawStr(54, 56, "Low");
   u8g2.drawStr(55, 63, "Cell");
   u8g2.drawFrame(57, 8, 11, 38);
-  if (lC <= 4000 && lC >= 2700) {
+  if (lCb <= 35 && lCb > 0) {
     u8g2.drawBox(59, 44-lCb, 7, lCb);
   }
   
@@ -328,7 +331,7 @@ void bars() {
   u8g2.drawStr(76, 56, "Health");
   u8g2.drawStr(86, 63, "%");
   u8g2.drawFrame(84, 8, 11, 38);
-  if (h <= 100 && h >= 0) {
+  if (hBar <= 35 && hBar > 0) {
     u8g2.drawBox(86, 44-hBar, 7, hBar);
   }
   
@@ -727,8 +730,18 @@ void loop() {
   if (millis_held > 200) {
     if (buttonState == LOW && previous == HIGH) {
 
+      // Long push over 3 sec sends MPO signal to clear BMS faults ** needs to be connected with 10kOhm pull up resistor to BAT+ and MPI **
+      if (millis_held > 3000) {
+        CAN0.sendMsgBuf(0x32, 0, 8, mpo);
+        }
+      
+      /*// Long push over 2 sec sends MPE signal ** not yet assigned task **
+      else if (millis_held > 2000) {
+        CAN0.sendMsgBuf(0x32, 0, 8, mpe);
+      }*/
+      
       // Long push for 0,5 sec changes contrast
-      if (millis_held >= 500) {
+      else if (millis_held >= 500) {
         if (c == 255) {
           c = 100;
         }
