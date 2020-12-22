@@ -3,21 +3,21 @@
 //
 //  WRITTEN BY:
 //  Tom Storebø 7th of May 2019
-//  GAUGE PAGE DEVELOPED FROM:
+//  POWER PAGE DEVELOPED FROM:
 //  Rudi Imbrechts "Analog Gauge v1.02" - 21st of December 2015
 //
 //  Change log
 //  25/05/19  5A scale amp needle, 50 degree needle movements amp and volt, scale lines voltmeter.
-//  01/06/19  Temp hi and lo on bottom right text screen, whilst cycles removed and Ah taken its place.
-//  03/06/19  Shifted the middle of text page 4 pixels left; Added BMS status to flags as well as change name from faults to flag. Various pos adjustments on text page.
-//  11/06/19  Swapped low and high cell in bars
-//  24/06/19  Edited CANBus data from Orion Jr as follows: removed BMS calculations for rawU, DCL, CCL; set Big Endian byte order on BMS status. Changed to 1 byte hex (0x01) instead of 2 byte (0x0001) in BMS status on text page.
+//  01/06/19  Temp hi and lo on bottom right "bms" page, whilst cycles removed and Ah taken its place.
+//  03/06/19  Shifted the middle of "bms" page 4 pixels left; Added BMS status to flags as well as change name from faults to flag. Various pos adjustments on "bms" page.
+//  11/06/19  Swapped low and high cell in "cells"
+//  24/06/19  Edited CANBus data from Orion Jr as follows: removed BMS calculations for rawU, DCL, CCL; set Big Endian byte order on BMS status. Changed to 1 byte hex (0x01) instead of 2 byte (0x0001) in BMS status on "bms" page.
 //  27/06/19  Added delayed amperage reading for more stability in watt and time indications and changed rawI from float to int.
-//  30/06/19  Added rxBuf for "ry" in gauge for displaying "sun" only when relay enabled; added bms status to new variable "fs" for "wrench" icon display; adjusted "0A" DCH & CHG limits.
+//  30/06/19  Added rxBuf for "ry" in power for displayimng "sun" only when relay enabled; added bms status to new variable "fs" for "wrench" icon display; adjusted "0A" DCH & CHG limits.
 //  09/07/19  Replaced counter with total pack cycles
-//  27/07/19  Added counter and adjusted cycles on text page; Adjusted Ah digit position
+//  27/07/19  Added counter and adjusted cycles on "bms" page; Adjusted Ah digit position
 //  30/08/19  Removed constraints on values and assigned minimum values to variables to avoid out of scale indications when power up; Changed low SOC warning to display below 20% SOC as long as charge safety relay in open.
-//  05/09/19  Returned limits of bars and text to previous values. **Never change things that work**; Improved Amp bar code; Refined when sun charge icon should appear.
+//  05/09/19  Returned limits of "cells" and text to previous values. **Never change things that work**; Improved Amp bar code; Refined when sun charge icon should appear.
 //  11/09/19  Changed time and watt calculations to use average current. Changed charging symbols to use average current.
 //  21/09/19  Removed the absolute and average current algorithm as I detected no values from CANBUS.
 //  22/09/19  Edited CANBUS data to fit Avg and Abs current as I suspect the rxId int is unable to fit a 5th Id. AvgI for clock computations. Can't get any reading of AbsI.
@@ -26,9 +26,14 @@
 //  27/09/19  Changed screen off for 3 contrast levels on long button push.
 //  28/09/19  Added button press to swap between average or instant Watt reading.
 //  01/10/19  Changed abbreviatons on BMS status messages to easier understand their meaning; Added 5 sec push on button to clear BMS faults through sending CANBUS data.
-//  27/10/19  Changed constraints on "bars" to use bar variable instead of using indicated values. Added BMS CANBUS input MPO and changed MPE name in sketch. MPO as Active low to be connected to MPI and a 10kOhm pull-up resistor to BAT+.
+//  27/10/19  Changed constraints on "cells" to use bar variable instead of using indicated values. Added BMS CANBUS input MPO and changed MPE name in sketch. MPO as Active low to be connected to MPI and a 10kOhm pull-up resistor to BAT+.
+//  07/03/20  Prepared functions for potential Vec500 CANBUS data as RPM and motor temperature.
+//  08/03/20  Cleaned up button setup algoritm; changed names of pages to "power, motor, cells and bms";
+//  21/03/20  Removed Debugging and removing the variable in "contrast" to save a byte
+//  02/04/20  **Added Switch statements to tidy the hits and contrast loop statements as an experiment. Sketch now uses 2 more byte ?!
+//  06/04/20  **Added function frame(), Added array id for CANBUS to make life easier should I change the id.
 //
-//  Sketch 22736 bytes
+//  Sketch 22432 bytes - previously 06/04/20 21838 bytes
 //
 //  HARDWARE:
 //  Arduino Uno clone
@@ -48,23 +53,23 @@ U8G2_SH1106_128X64_NONAME_1_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
 #define CAN0_INT 9                              // Set INT to pin 9
 MCP_CAN CAN0(10);                               // Set CS to pin 10
 
-//  Debugging
-int debug = 0;
-
 //  MCP_CAN RECEIVE DATA
 long unsigned int rxId;     // Stores 4 bytes 32 bits
 unsigned char len = 0;      // Stores at least 1 byte
 unsigned char rxBuf[8];     // Stores 8 bytes, 1 character  = 1 byte
 
 //  MCP_CAN SEND DATA
-byte mpo[8] = {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}; // Multi-purpose output activation signal
-//byte mpe[8] = {0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}; // Multi-purpose enable activation signal
+byte mpo[8] = {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}; // Multi-purpose output activation signal (Can activate by holding button to clear fault through MPI)
 
 //  CANBUS data Identifier List
 //  ID 0x03B BYT0+1:INST_VOLT BYT2+3:INST_AMP BYT4+5:ABS_AMP BYT6:SOC **** ABS_AMP from OrionJr errendous ****
 //  ID 0x6B2 BYT0+1:LOW_CELL BYT2+3:HIGH_CELL BYT4:HEALTH BYT5+6:CYCLES
 //  ID 0x0A9 BYT0:RELAY_STATE BYT1:CCL BYT2:DCL BYT3+4:PACK_AH BYT5+6:AVG_AMP
 //  ID 0x0BD BYT0+1:CUSTOM_FLAGS BYT2:HI_TMP BYT3:LO_TMP BYT4:COUNTER BYT5:BMS_STATUS
+//  ** ID for VEC500 controller to be added
+
+// CANBUS data id array
+const int id[4] = {0x03B, 0x6B2, 0x0A9, 0x0BD};
 
 //  Variables
 unsigned int rawU;            // Voltage - multiplied by 10
@@ -76,7 +81,7 @@ unsigned int p;               // Watt reading
 int m = 10;                   // Mapped values to fit needle
 u8g2_uint_t av = 0;           // 8 bit unsigned int amperage and voltage needle angle
 u8g2_uint_t xx = 0;           // 8 bit unsigned int watt needle angle
-uint8_t c = 255;              // 8 bit unsigned integer range from 0-255 (low - high contrast)
+byte c = 255;                 // 8 bit unsigned integer range from 0-255 (low - high contrast)
 
 //  Button settings
 const int buttonPin = 2;  // Pin assigned for button
@@ -84,20 +89,13 @@ long millis_held;         // 4 byte variable for storing duration button is held
 unsigned long firstTime;  // 4 byte variable for storing time button is first pushed
 byte previous = HIGH;     // Pin state before pushing or releasing button
 byte hits;                // Variable for how many times button has bin pushed
-byte buttonState;         // Variable for button pushed or not
+byte buttonState;         // Variable storing if button is pushed or not
 
 // ------------------------ setup ------------------------------
 
 void setup() {
   // Start serial monitor communication
-  if (debug == 1) {
-    Serial.begin(9600);
-  }
-  else {
-    Serial.begin(9600);
-    Serial.println("Debugging Off");
-    Serial.end();
-  }
+  //Serial.begin(9600);
 
    // Initialise MCP2515 running at 8MHz and baudrate 250kb/s
   CAN0.begin(MCP_ANY, CAN_250KBPS, MCP_8MHZ);
@@ -114,16 +112,20 @@ void setup() {
   u8g2.setFont(u8g2_font_chikita_tf);
 }
 
-// ------------------------------------------------- void contrast() ---------------------------------------
+// ------------------------------------------------- contrast function ---------------------------------------
 
-void contrast(uint8_t c) {
-  
+void contrast() {
   u8g2.setContrast(c);
 }
+// ------------------------------------------------- frame function ----------------------------------------
 
-// --------------------- gauge display * 11 bytes from rxBuf ----------------------
+void frame (byte a) {
+  u8g2.drawFrame(a, 8, 11, 38);
+}
 
-void gauge(uint8_t angle) {
+// --------------------- power page * 11 bytes from rxBuf ----------------------
+
+void power(uint8_t angle) {
 
   // Fault messages & status from CANBus for displaying wrench icon
   int fs;
@@ -133,15 +135,15 @@ void gauge(uint8_t angle) {
   int avgI;
   
   // Sort CANBus data buffer
-  if(rxId == 0x03B) {
+  if(rxId == id[0]) {
     rawU = ((rxBuf[0] << 8) + rxBuf[1]);
     rawI = ((rxBuf[2] << 8) + rxBuf[3]);
     soc = (rxBuf[6]);
   }
-  if(rxId == 0x0BD) {
+  if(rxId == id[3]) {
     fs = (rxBuf[0] + rxBuf[1] + rxBuf[5]);
   }
-  if(rxId == 0x0A9) {
+  if(rxId == id[2]) {
     ry = (rxBuf[0]);
     avgI = ((rxBuf[5] << 8) + rxBuf[6]);
   }
@@ -269,10 +271,32 @@ void gauge(uint8_t angle) {
     u8g2.print(t);
   }
 }
- 
-// ------------------------ bars gauge * 9 bytes from rxBuf ------------------------
 
-void bars() {
+// ------------------------ motor page * XXX bytes from rxBuf ----------------------------------
+/*
+void motor() {
+
+  // Variables from CANBus
+  int mR;       // Motor revolutions per minute
+  int mT;       // Motor temperature
+  int mU;       // Motor voltage
+  int mI;       // Motor amperage
+
+  // Sort CANBus data buffer
+  if(rxId == 0xZZZ) {
+    mR = ;
+    mT = ;
+    mU = ;
+    mI = ;
+  }
+  // Draw text
+  u8g2.drawStr(35, 5, "Motor RPM");
+  u8g2.drawStr(35, 30, "Temperature");
+}
+*/
+// ------------------------ cells page * 9 bytes from rxBuf ------------------------
+
+void cells() {
   
   // Variables from CANBus
   int hC;        // High Cell Voltage in 0,0001V
@@ -280,11 +304,11 @@ void bars() {
   byte h;        // Health
 
   // Sort CANBus data buffer
-  if(rxId == 0x03B) {
+  //if(rxId == id[0]) {
     rawU = ((rxBuf[0] << 8) + rxBuf[1]);
     rawI = ((rxBuf[2] << 8) + rxBuf[3]);
-  }
-  if(rxId == 0x6B2) {
+  //}
+  if(rxId == id[1]) {
     lC = ((rxBuf[0] << 8) + rxBuf[1]);
     hC = ((rxBuf[2] << 8) + rxBuf[3]);
     h = (rxBuf[4]);
@@ -296,7 +320,7 @@ void bars() {
   u8g2.print(rawU/10.0, 1); // One decimal
   u8g2.drawStr(1, 56, "Pack");
   u8g2.drawStr(2, 63, "Volt");
-  u8g2.drawFrame(5, 8, 11, 38);
+  frame(5);//u8g2.drawFrame(5, 8, 11, 38);
   u8g2.drawBox(7, 44-pV, 7, pV);
   
   // Draw Min and Max cell voltage bars
@@ -306,7 +330,7 @@ void bars() {
   u8g2.print(hC/1000.00, 2); // Two decimals
   u8g2.drawStr(28, 56, "High");
   u8g2.drawStr(29, 63, "Cell");
-  u8g2.drawFrame(31, 8, 11, 38);
+  frame(31);//u8g2.drawFrame(31, 8, 11, 38);
   if (hCb <= 35 && hCb > 0) {
     u8g2.drawBox(33, 44-hCb, 7, hCb);
   }
@@ -314,7 +338,7 @@ void bars() {
   u8g2.print(lC/1000.00, 2);  // Two decimals
   u8g2.drawStr(54, 56, "Low");
   u8g2.drawStr(55, 63, "Cell");
-  u8g2.drawFrame(57, 8, 11, 38);
+  frame(57);//u8g2.drawFrame(57, 8, 11, 38);
   if (lCb <= 35 && lCb > 0) {
     u8g2.drawBox(59, 44-lCb, 7, lCb);
   }
@@ -330,7 +354,7 @@ void bars() {
   u8g2.print(h);
   u8g2.drawStr(76, 56, "Health");
   u8g2.drawStr(86, 63, "%");
-  u8g2.drawFrame(84, 8, 11, 38);
+  frame(84);//u8g2.drawFrame(84, 8, 11, 38);
   if (hBar <= 35 && hBar > 0) {
     u8g2.drawBox(86, 44-hBar, 7, hBar);
   }
@@ -371,7 +395,7 @@ void bars() {
     u8g2.print(rawI/10.0, 0);
   }
   u8g2.drawStr(108, 56, "Amp");
-  u8g2.drawFrame(111, 8, 11, 38);
+  frame(111);//u8g2.drawFrame(111, 8, 11, 38);
   // No bar displayed below 7,3A
   if (abs(rawI) > 72 && abs(rawI) <= 250) {
     u8g2.drawBox(113, 45-aBar, 7, aBar);
@@ -381,9 +405,9 @@ void bars() {
     u8g2.drawBox(113, 10, 7, 34);
   }
 }
-// ------------------------ text display * 13 bytes from rxBuf ---------------------
+// ------------------------ bms page * 13 bytes from rxBuf ---------------------
 
-void text() {
+void bms() {
 
   // Variables from CANBus
   int fu;                 // BMS faults
@@ -398,22 +422,22 @@ void text() {
   int cc;                 // Total pack cycles
 
   // Sort CANBus data buffer
-  if(rxId == 0x0A9) {
+  if(rxId == id[2]) {
     ry = (rxBuf[0]);
     ccl = (rxBuf[1]);
     dcl = (rxBuf[2]);
     ah = ((rxBuf[3] << 8) + rxBuf[4]);
   }
-  if(rxId == 0x6B2) {
+  //if(rxId == id[1]) {
     cc = ((rxBuf[5] << 8) + rxBuf[6]);
-  }
-  if(rxId == 0x0BD) {
+  //}
+  if(rxId == id[3]) {
     fu = ((rxBuf[0] << 8) + rxBuf[1]);
     tH = (rxBuf[2]);
     tL = (rxBuf[3]);
     ct = (rxBuf[4]);
     st = (rxBuf[5]);
-    // Saves fault & status to "wrench" after reviewing text page
+    // Saves fault & status to "wrench" after reviewing bms page
     wrench = (rxBuf[0] + rxBuf[1] + rxBuf[5]);
   }
   
@@ -684,7 +708,7 @@ void text() {
 void loop() {
 
   do {
-    contrast(c);
+    contrast();
   }
   while(u8g2.nextPage());
   
@@ -714,83 +738,115 @@ void loop() {
   else {
     xx -= 45;
   }
+  
+  // Button setup
+  //
+  // (1) Holding for more than 3000 ms and releasing clears BMS fault ** sends MPO signal via MPI and needs to be connected with 10kOhm pull-up resistor between BAT+ and MPI **
+  // (2) Holding for more than 500 ms and releasing changes between 3 levels of contrast
+  // (3) Short push for more than 200 but less than 500 ms changes between pages
 
-  // Check the status of the button
+  // Assign state of button to buttonState variable
   buttonState = digitalRead(buttonPin);
 
-  // How long is the button held down
+  // Time button is pushed
   if (buttonState == HIGH && previous == LOW) {
     firstTime = millis();
   }
+  // Duration butten is held down
   if (buttonState == LOW && previous == HIGH) {
     millis_held = millis() - firstTime;
   }
-
-  // Require more than 200ms push to qualify as a button "hit"
+  // Require more than 200ms push to qualify as a button "hit" to avoid small voltage fluctuations interfering
   if (millis_held > 200) {
-    if (buttonState == LOW && previous == HIGH) {
-
-      // Long push over 3 sec sends MPO signal to clear BMS faults ** needs to be connected with 10kOhm pull up resistor to BAT+ and MPI **
-      if (millis_held > 3000) {
-        CAN0.sendMsgBuf(0x32, 0, 8, mpo);
-        }
-      
-      /*// Long push over 2 sec sends MPE signal ** not yet assigned task **
-      else if (millis_held > 2000) {
-        CAN0.sendMsgBuf(0x32, 0, 8, mpe);
-      }*/
-      
-      // Long push for 0,5 sec changes contrast
-      else if (millis_held >= 500) {
-        if (c == 255) {
-          c = 100;
-        }
-        else if (c == 100) {
-          c = 180;
-        }
-        else {
-          c = 255;
-        }
+    
+    // (1)
+    if (millis_held > 3000) {
+      CAN0.sendMsgBuf(0x32, 0, 8, mpo);
+    }
+    // (2)
+    else if (millis_held >= 500) {
+      switch (c) {
+        case 255:
+        c = 100;
+        break;
+        case 100:
+        c = 180;
+        break;
+        default:
+        c = 255;
       }
       
-      // Short button press changes between pages
+      /*if (c == 255) {
+      }
+        c = 100;
+      }
+      else if (c == 100) {
+        c = 180;
+      }
       else {
-        if (hits < 3) {
-          hits += 1;  // adds 1 to hits
-        }
-        else {
-          hits = 1;
-        }
+        c = 255;
+      }*/
+    }
+    // (3)
+    else {
+      if (hits < 3) {
+        hits += 1;  // adds 1 to hits
+      }
+      else {
+        hits = 1;
       }
     }
     // Save button state
     previous = buttonState;
   }
 
-  // Display gauge page
+  switch (hits) {
+    case 1:
+    u8g2.firstPage(); 
+    do {             
+      power(xx);
+    }
+    while(u8g2.nextPage());
+    break;
+    case 2:
+    u8g2.firstPage();
+    do {
+      cells();
+    }
+    while(u8g2.nextPage());
+    break;
+    default:
+    u8g2.firstPage();
+    do {
+      bms();
+    }
+    while(u8g2.nextPage());
+  }
+  /*
+  // Display power page
   if (hits == 1) {
     u8g2.firstPage(); 
     do {             
-      gauge(xx);
+      power(xx);
     }
     while(u8g2.nextPage());
   }
 
-  // Display bars page
+  // Display cells page
   else if (hits == 2) {
     u8g2.firstPage();
     do {
-      bars();
+      cells();
     }
     while(u8g2.nextPage());
   }
 
-  // Display text page
+  // Display bms page
   else {
     u8g2.firstPage();
     do {
-      text();
+      bms();
     }
     while(u8g2.nextPage());
-  }
+  }*/
 }
